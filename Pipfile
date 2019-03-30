@@ -7,6 +7,9 @@ verify_ssl = true
 autopep8 = "*"
 
 [packages]
+mypy = "*"
+mongoengine = "*"
+pymongo = "*"
 
 [requires]
 python_version = "3.7"

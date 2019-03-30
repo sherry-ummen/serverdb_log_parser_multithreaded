@@ -1,6 +1,8 @@
 import argparse
 import sys
 import logging
+import asyncio
+import random
 
 from serverdb_log_parser_multithreaded import __version__
 
@@ -54,12 +56,48 @@ def setup_logging(loglevel):
                         format=logformat, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-def main(args):
-    """Main entry point allowing external calls
+async def produce(queue, n):
+    for x in range(n):
+        # produce an item
+        print('producing {}/{}'.format(x, n))
+        # simulate i/o operation using sleep
+        await asyncio.sleep(random.random())
+        item = str(x)
+        # put the item in the queue
+        await queue.put(item)
 
-    Args:
-      args ([str]): command line parameter list
-    """
+
+async def consume(queue):
+    while True:
+        # wait for an item from the producer
+        item = await queue.get()
+
+        # process the item
+        print('consuming {}...'.format(item))
+        # simulate i/o operation using sleep
+        await asyncio.sleep(random.random())
+
+        # Notify the queue that the item has been processed
+        queue.task_done()
+
+
+async def runit(n):
+    queue = asyncio.Queue()
+    # schedule the consumer
+    consumer = asyncio.ensure_future(consume(queue))
+    # run the producer and wait for completion
+    await produce(queue, n)
+    # wait until the consumer has processed all items
+    await queue.join()
+    # the consumer is still awaiting for an item, cancel it
+    consumer.cancel()
+
+
+def main(args):
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(runit(10))
+    loop.close()
+
     args = parse_args(args)
     setup_logging(args.loglevel)
     _logger.debug("Scripts starts here")
