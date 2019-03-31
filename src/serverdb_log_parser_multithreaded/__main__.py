@@ -3,6 +3,8 @@ import sys
 import logging
 import asyncio
 import random
+import os
+from pathlib import Path
 
 from serverdb_log_parser_multithreaded import __version__
 
@@ -42,6 +44,23 @@ def parse_args(args):
         help="set loglevel to DEBUG",
         action='store_const',
         const=logging.DEBUG)
+    parser.add_argument(
+        '-f',
+        '--force',
+        dest="force",
+        help="Delete the database before parsing ",
+        action='store_true')
+    parser.add_argument(
+        '-p',
+        '--path',
+        dest="folder_path",
+        help="Folder Path to parse ", required=True)
+    parser.add_argument(
+        '-d',
+        '--database',
+        dest="database_name",
+        help="Name of the database")
+
     return parser.parse_args(args)
 
 
@@ -56,22 +75,19 @@ def setup_logging(loglevel):
                         format=logformat, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-async def produce(queue, n):
-    for x in range(n):
-        # produce an item
-        print('producing {}/{}'.format(x, n))
-        # simulate i/o operation using sleep
-        await asyncio.sleep(random.random())
-        item = str(x)
-        # put the item in the queue
-        await queue.put(item)
+async def produce(queue, folder_path: str):
+    path = Path(folder_path)
+    folders = [x for x in path.iterdir() if x.is_dir()]
+    for folder in folders:
+        await queue.put(folder)
+    await queue.put(None)
 
 
 async def consume(queue):
+
     while True:
         # wait for an item from the producer
         item = await queue.get()
-
         # process the item
         print('consuming {}...'.format(item))
         # simulate i/o operation using sleep
@@ -80,27 +96,40 @@ async def consume(queue):
         # Notify the queue that the item has been processed
         queue.task_done()
 
+        if item == None:
+            break
 
-async def runit(n):
+
+async def parse_in(folder_path: str):
     queue = asyncio.Queue()
-    # schedule the consumer
-    consumer = asyncio.ensure_future(consume(queue))
     # run the producer and wait for completion
-    await produce(queue, n)
+    await produce(queue, folder_path)
+
+    await consume(queue)
     # wait until the consumer has processed all items
     await queue.join()
-    # the consumer is still awaiting for an item, cancel it
-    consumer.cancel()
 
 
 def main(args):
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(runit(10))
-    loop.close()
 
     args = parse_args(args)
     setup_logging(args.loglevel)
+
+    dbname = "ServerDBLogDataPython"
+
+    if args.database_name:
+        dbname = args.database_name
+
+    if args.force:
+        from pymongo import MongoClient
+        client = MongoClient()
+        client.drop_database(dbname)
+
     _logger.debug("Scripts starts here")
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(parse_in(args.folder_path))
+    loop.close()
+
     _logger.info("Script ends here")
 
 
