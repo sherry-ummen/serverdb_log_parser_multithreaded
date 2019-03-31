@@ -8,6 +8,10 @@ from pathlib import Path
 from serverdb_log_parser_multithreaded import __version__
 from serverdb_log_parser_multithreaded.log_parser.log_parser import Parser
 from mongoengine import *
+import multiprocessing as mp
+from multiprocessing import Manager
+from multiprocessing import Queue
+import time
 
 __author__ = "Sherry Ummen"
 __copyright__ = "Sherry Ummen"
@@ -76,42 +80,43 @@ def setup_logging(loglevel):
                         format=logformat, datefmt="%Y-%m-%d %H:%M:%S")
 
 
-async def produce(queue, folder_path: str):
+def parse_multi_process(folder_path: str, db_name: str):
+    mpl = mp.log_to_stderr()
+    mpl.setLevel(logging.INFO)
+    m = Manager()
+    q = m.Queue()
     path = Path(folder_path)
-    folders = [x for x in path.iterdir() if x.is_dir()]
+    folders = [(x, os.path.basename(x))
+               for x in path.iterdir() if x.is_dir()]
+    files = []
     for folder in folders:
-        username: str = os.path.basename(folder)
-        for file in Path.glob(folder, 'serverdb_*.log'):
-            await queue.put((username, file))
-    await queue.put(None)
+        for file in Path.glob(folder[0], 'serverdb_*.log'):
+            q.put((str(file), folder[1], db_name))
+            files.append(q)
 
+    pool = mp.Pool(mp.cpu_count())
+    result = pool.map_async(run_parser, files)
 
-async def consume(queue):
-
+    # monitor loop
+    prev_qsize = q.qsize()
     while True:
-        # wait for an item from the producer
-        item = await queue.get()
-        # process the item
-        await Parser(item[1], item[0]).parse()
-        # Notify the queue that the item has been processed
-        queue.task_done()
-        print(f"Items remaining : {queue.qsize()}")
-        if item == None:
+        if result.ready():
             break
+        else:
+            size = q.qsize()
+            if prev_qsize != size:
+                print(f"Remaining items to process: {size}")
+            prev_qsize = size
+            time.sleep(1)
+
+    outputs = result.get()
 
 
-async def parse_in(folder_path: str):
-    queue = asyncio.Queue()
-    # run the producer and wait for completion
-    await produce(queue, folder_path)
-
-    await consume(queue)
-    # wait until the consumer has processed all items
-    await queue.join()
+def run_parser(queue):
+    Parser(queue).parse()
 
 
 def main(args):
-
     args = parse_args(args)
     setup_logging(args.loglevel)
 
@@ -125,11 +130,11 @@ def main(args):
         client = MongoClient()
         client.drop_database(dbname)
 
-    connect(db=dbname)
     _logger.debug("Scripts starts here")
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(parse_in(args.folder_path))
-    loop.close()
+    start = time.time()
+    parse_multi_process(args.folder_path, dbname)
+    end = time.time()
+    print(f"\n{'#'*20}\nTotal time taken : {end - start} secs\n{'#'*20}\n")
 
     _logger.info("Script ends here")
 

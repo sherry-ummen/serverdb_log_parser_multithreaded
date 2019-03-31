@@ -6,6 +6,10 @@ import re
 import threading
 from pathlib import Path
 from serverdb_log_parser_multithreaded.database.db_schema import FileVersionData, SyncMode, Modification, LogData, UnparsedData
+import multiprocessing as mp
+from mongoengine import *
+from multiprocessing import Queue
+import os
 
 Sync_log_entry_pattern = re.compile(
     "^(?P<syncdatetime>.*?) INFO \[(?P<database_name>.*?)\] \((?P<sync_mode>.*?)\) Author\[(?P<author>.*?)\] Mod:\'(?P<modification_type>.*?)\' Doc ID:(?P<doc_id>.*)"
@@ -25,15 +29,17 @@ Sync_log_entry_pattern_skipped = re.compile(
 
 class Parser:
 
-    def __init__(self, file_path: str, user_name: str):
+    def __init__(self, queue: Queue):
         self._data: dict = {str(LogData): [], str(UnparsedData): []}
-        self.file_path = file_path
-        self.user_name = user_name
+        get = queue.get()
+        if get == None:
+            return
+        self.file_path, self.user_name, self.db_name = get
 
-    async def parse(self):
-        self.worker_id = threading.current_thread().name
+    def parse(self):
+        self.worker_id = os.getpid()
         file_hash = hashlib.md5(open(self.file_path, 'rb').read()).hexdigest()
-
+        connect(self.db_name)
         entries = FileVersionData.objects(
             file_name=os.path.basename(self.file_path),
             file_hash=file_hash,
@@ -55,13 +61,10 @@ class Parser:
                         .on_failure(lambda: self.match_sync_skipped_entry(line, file_version_data))\
                         .on_failure(lambda: self.match_sync_error_entry(line, file_version_data)) \
                         .on_failure(lambda: self.unparsed_data(line, file_version_data))
-            self.print(f"Finished parsing file: {self.file_path}")
-            # self._session.commit()
             file_version_data.is_parsing_complete = True
             file_version_data.save()
-
-            self.print(f"Finished updating FileVersionData")
-            self.print("Done!")
+            self.print(
+                f"File: {file_version_data.file_name} User: {self.user_name} Done!")
         except:
             self.print(f"Failed to save data for file: {self.file_path}")
             raise
