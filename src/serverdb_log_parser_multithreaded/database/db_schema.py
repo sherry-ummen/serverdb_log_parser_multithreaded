@@ -10,6 +10,7 @@ class Modification:
     MODIFIED = "MODIFIED"
     NEW = "NEW"
     DELETE = "DELETE"
+    UNKNOWN = "UNKNOWN_ERROR"
 
 
 class FileVersionData(Document):
@@ -22,9 +23,7 @@ class FileVersionData(Document):
 
 
 class LogData(Document):
-    file_version_data = ReferenceField(FileVersionData),
-    file_name = StringField(max_length=256),
-    file_path = StringField(max_length=256),
+    file_version_data = ReferenceField(FileVersionData)
     user_name = StringField(max_length=50)
     date_time = DateTimeField()
     database_name = StringField(max_length=50)

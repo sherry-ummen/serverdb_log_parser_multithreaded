@@ -5,8 +5,9 @@ import asyncio
 import random
 import os
 from pathlib import Path
-
 from serverdb_log_parser_multithreaded import __version__
+from serverdb_log_parser_multithreaded.log_parser.log_parser import Parser
+from mongoengine import *
 
 __author__ = "Sherry Ummen"
 __copyright__ = "Sherry Ummen"
@@ -79,7 +80,9 @@ async def produce(queue, folder_path: str):
     path = Path(folder_path)
     folders = [x for x in path.iterdir() if x.is_dir()]
     for folder in folders:
-        await queue.put(folder)
+        username: str = os.path.basename(folder)
+        for file in Path.glob(folder, 'serverdb_*.log'):
+            await queue.put((username, file))
     await queue.put(None)
 
 
@@ -89,13 +92,10 @@ async def consume(queue):
         # wait for an item from the producer
         item = await queue.get()
         # process the item
-        print('consuming {}...'.format(item))
-        # simulate i/o operation using sleep
-        await asyncio.sleep(random.random())
-
+        await Parser(item[1], item[0]).parse()
         # Notify the queue that the item has been processed
         queue.task_done()
-
+        print(f"Items remaining : {queue.qsize()}")
         if item == None:
             break
 
@@ -125,6 +125,7 @@ def main(args):
         client = MongoClient()
         client.drop_database(dbname)
 
+    connect(db=dbname)
     _logger.debug("Scripts starts here")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(parse_in(args.folder_path))
